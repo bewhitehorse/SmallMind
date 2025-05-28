@@ -100,7 +100,7 @@ class Attention(nn.Module):
         ).unsqueeze(0).unsqueeze(0)
 
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
-        scores = self.dropout(scores)
+        scores = self.attn_dropout(scores)
         output = scores @ xv
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.n_head * self.head_size)
         output = self.output_dropout(self.o_proj(output))
@@ -121,12 +121,18 @@ class FeedForward(nn.Module):
     
     def forward(self, x):
         return self.dropout(self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x)))
+    
+class MoEGate(nn.Module):
+    pass
+
+class MOEFeedForward(nn.Module):
+    pass
  
 class SmallMindBlock(nn.Module):
     def __init__(self, layer_id: int, config):
         super().__init__()
         self.attn = Attention(config)
-        self.ffn = FeedForward(config)
+        self.ffn = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
         self.attn_norm = RMSNorm(config)
         self.ffn_norm = RMSNorm(config)
     
@@ -158,7 +164,9 @@ class SmallMindModel(nn.Module):
         self.config = config
         self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embd)
 
-        freqs_cos, freqs_sin = precompute_freqs_cis(config.head_size, config.max_position_embeddings, config.theta)
+        freqs_cos, freqs_sin = precompute_freqs_cis(dim = config.hidden_dim // config.n_head, 
+                                                    end = config.max_position_embeddings, 
+                                                    theta = config.theta)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
 
@@ -195,7 +203,7 @@ class SmallMindModel(nn.Module):
         )
 
         presents = []
-        for layer_idx, (block, past_key_value) in enumerate(zip(self.blocks, past_key_values)):
+        for layer_id, (block, past_key_value) in enumerate(zip(self.blocks, past_key_values)):
             hidden_states, present = block(
                 hidden_states,
                 position_embeddings,
@@ -207,7 +215,13 @@ class SmallMindModel(nn.Module):
 
         hidden_states = self.ln_final(hidden_states)
 
-        return hidden_states, presents
+        aux_loss = sum(
+            block.mlp.aux_loss
+            for block in self.blocks
+            if isinstance(block.ffn, MOEFeedForward)
+        )
+
+        return hidden_states, presents, aux_loss
 
 class SmallMindForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = SmallMindConfig
@@ -227,7 +241,7 @@ class SmallMindForCausalLM(PreTrainedModel, GenerationMixin):
                 use_cache: bool = False,
                 logits_to_keep: Union[int, torch.Tensor] = 0,
                 **args):
-        h, past_kvs = self.model(
+        h, past_kvs, aux_loss = self.model(
             idx = idx,
             attention_mask = attention_mask,
             past_key_values = past_key_values,
@@ -238,5 +252,6 @@ class SmallMindForCausalLM(PreTrainedModel, GenerationMixin):
         logits = self.lm_head(h[:, slice_indices, :])
         self.OUT.__setitem__('last_hidden_state', h)
         self.OUT.__setitem__('logits', logits)
+        self.OUT.__setitem__('aux_loss', aux_loss)
         self.OUT.__setitem__('past_key_values', past_kvs)
         return self.OUT

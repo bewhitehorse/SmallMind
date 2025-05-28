@@ -5,22 +5,23 @@ class SmallMindConfig(PretrainedConfig):
     
     def __init__(
         self, 
-        block_size: int = 512, #maximum sequence length
-        batch_size: int = 12,
-        n_layer: int = 12,
-        n_head: int = 12,
-        n_key_value_head: int = 6,
-        n_embd: int = 768,
-        hidden_dim: int = 768,
+        max_seq_len: int = 512, 
+        batch_size: int = 32,
+        n_layer: int = 8,
+        n_head: int = 8,
+        n_key_value_head: int = 2,
+        n_embd: int = 512,
+        hidden_dim: int = 512,
         dropout: float = 0.1,
-        vocab_size: int = 50257,
+        vocab_size: int = 6400,
         max_new_tokens: int = 400,
         max_lines: int = 10000,
         norm_eps: float = 1e-5,
         intermediate_size: int = None,
         hidden_act: str = 'silu',
-        theta: float = 10000.0,
+        theta: float = 1000000.0,
         max_position_embeddings: int = 32768,
+        use_moe: bool = False,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -40,3 +41,4 @@ class SmallMindConfig(PretrainedConfig):
         self.hidden_act = hidden_act
         self.theta = theta
         self.max_position_embeddings = max_position_embeddings
+        self.use_moe = use_moe
